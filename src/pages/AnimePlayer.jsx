@@ -516,6 +516,10 @@ const VideoPlayer = ({ src, poster, tracks = [], animeId, episodeNumber, onNextE
   const [isBuffering, setIsBuffering] = useState(false)
   const [showVolumeSlider, setShowVolumeSlider] = useState(false)
   const [convertedTracks, setConvertedTracks] = useState([])
+  const [userTracks, setUserTracks] = useState([])
+  const fileInputRef = useRef(null)
+  const createdBlobUrlsRef = useRef(new Set())
+  const [selectedSubtitleKey, setSelectedSubtitleKey] = useState('none')
   const [brightness, setBrightness] = useState(1)
   const [showFeedback, setShowFeedback] = useState(null)
 
@@ -594,7 +598,9 @@ const VideoPlayer = ({ src, poster, tracks = [], animeId, episodeNumber, onNextE
           console.log('[VideoPlayer] Direct fetch successful, content length:', srtContent.length)
           const vttContent = convertSrtToVtt(srtContent)
           const blob = new Blob([vttContent], { type: 'text/vtt' })
-          return URL.createObjectURL(blob)
+          const blobUrl = URL.createObjectURL(blob)
+          createdBlobUrlsRef.current.add(blobUrl)
+          return blobUrl
         }
       }
     } catch (err) {
@@ -617,7 +623,9 @@ const VideoPlayer = ({ src, poster, tracks = [], animeId, episodeNumber, onNextE
           console.log('[VideoPlayer] Proxied fetch successful, content length:', srtContent.length)
           const vttContent = convertSrtToVtt(srtContent)
           const blob = new Blob([vttContent], { type: 'text/vtt' })
-          return URL.createObjectURL(blob)
+          const blobUrl = URL.createObjectURL(blob)
+          createdBlobUrlsRef.current.add(blobUrl)
+          return blobUrl
         }
       } else {
         console.log('[VideoPlayer] Proxied fetch returned status:', response.status)
@@ -918,6 +926,47 @@ const VideoPlayer = ({ src, poster, tracks = [], animeId, episodeNumber, onNextE
     }
   }, [convertedTracks, subtitlesEnabled])
 
+  // Ensure a sensible default selection when tracks change
+  useEffect(() => {
+    const cloudExists = convertedTracks && convertedTracks.length > 0
+    const userExists = userTracks && userTracks.length > 0
+
+    const keyExists = (key) => {
+      if (!key || key === 'none') return false
+      if (key.startsWith('user-')) {
+        const idx = Number(key.split('-')[1])
+        return !isNaN(idx) && userTracks[idx]
+      }
+      if (key.startsWith('cloud-')) {
+        const idx = Number(key.split('-')[1])
+        return !isNaN(idx) && convertedTracks[idx]
+      }
+      return false
+    }
+
+    if (!keyExists(selectedSubtitleKey)) {
+      if (userExists) setSelectedSubtitleKey('user-0')
+      else if (cloudExists) setSelectedSubtitleKey('cloud-0')
+      else setSelectedSubtitleKey('none')
+    }
+  }, [convertedTracks, userTracks])
+
+  // Cleanup any created blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      try {
+        createdBlobUrlsRef.current.forEach((url) => {
+          if (url && url.startsWith && url.startsWith('blob:')) {
+            URL.revokeObjectURL(url)
+          }
+        })
+      } catch (e) {
+        // ignore
+      }
+      createdBlobUrlsRef.current.clear()
+    }
+  }, [])
+
   // Handle quality change
   const handleQualityChange = useCallback((newQuality) => {
     setQuality(newQuality)
@@ -950,6 +999,61 @@ const VideoPlayer = ({ src, poster, tracks = [], animeId, episodeNumber, onNextE
     }
     setSubtitlesEnabled(newEnabledState)
   }, [subtitlesEnabled])
+
+  // Handle user subtitle file uploads (.srt or .vtt)
+  const handleFileInputChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const text = await file.text()
+      let vttContent = text
+      if (file.name.toLowerCase().endsWith('.srt')) {
+        vttContent = convertSrtToVtt(text)
+      } else if (!text.trim().startsWith('WEBVTT')) {
+        vttContent = convertSrtToVtt(text)
+      }
+      const blob = new Blob([vttContent], { type: 'text/vtt' })
+      const blobUrl = URL.createObjectURL(blob)
+      createdBlobUrlsRef.current.add(blobUrl)
+      const newTrack = {
+        vttUrl: blobUrl,
+        label: file.name,
+        lang: 'en',
+        index: `user-${Date.now()}`
+      }
+      setUserTracks(prev => {
+        const next = [...prev, newTrack]
+        setSelectedSubtitleKey(`user-${next.length - 1}`)
+        return next
+      })
+      setSubtitlesEnabled(true)
+    } catch (err) {
+      console.error('Failed to load subtitle file', err)
+    } finally {
+      // reset input so same file can be uploaded again if needed
+      if (e.target) e.target.value = ''
+    }
+  }
+
+  const removeUserTrack = (index) => {
+    const idx = Number(index)
+    if (isNaN(idx)) return
+    setUserTracks(prev => {
+      const track = prev[idx]
+      if (track && track.vttUrl && track.vttUrl.startsWith('blob:')) {
+        try { URL.revokeObjectURL(track.vttUrl) } catch(e) {}
+        createdBlobUrlsRef.current.delete(track.vttUrl)
+      }
+      const next = prev.filter((_, i) => i !== idx)
+      // adjust selection
+      if (selectedSubtitleKey === `user-${idx}`) {
+        if (next.length > 0) setSelectedSubtitleKey(`user-0`)
+        else if (convertedTracks.length > 0) setSelectedSubtitleKey(`cloud-0`)
+        else setSelectedSubtitleKey('none')
+      }
+      return next
+    })
+  }
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1366,16 +1470,28 @@ const VideoPlayer = ({ src, poster, tracks = [], animeId, episodeNumber, onNextE
           crossOrigin="anonymous"
           style={{ filter: `brightness(${brightness})`, ...getZoomStyle() }}
         >
-          {convertedTracks.map((track) => (
-            <track
-              key={`track-${track.index}`}
-              kind="subtitles"
-              src={track.vttUrl}
-              srclang={track.lang || 'en'}
-              label={track.label || 'English'}
-              default={true}
-            />
-          ))}
+          {(() => {
+            if (selectedSubtitleKey === 'none') return null
+            let track = null
+            if (selectedSubtitleKey.startsWith('user-')) {
+              const idx = Number(selectedSubtitleKey.split('-')[1])
+              track = userTracks[idx]
+            } else if (selectedSubtitleKey.startsWith('cloud-')) {
+              const idx = Number(selectedSubtitleKey.split('-')[1])
+              track = convertedTracks[idx]
+            }
+            if (!track) return null
+            return (
+              <track
+                key={`track-${track.index}`}
+                kind="subtitles"
+                src={track.vttUrl}
+                srclang={track.lang || 'en'}
+                label={track.label || 'English'}
+                default={true}
+              />
+            )
+          })()}
         </video>
       )}
 
@@ -1680,7 +1796,7 @@ const VideoPlayer = ({ src, poster, tracks = [], animeId, episodeNumber, onNextE
                       )}
 
                       {/* Subtitle toggle */}
-                      {tracks.length > 0 && (
+                      {(tracks.length > 0 || userTracks.length > 0) && (
                         <button
                           onClick={toggleSubtitles}
                           className="w-full flex items-center justify-between px-2 py-1.5 bg-gray-800 rounded-lg text-sm text-white hover:bg-gray-700 transition-all touch-manipulation"
@@ -1691,6 +1807,55 @@ const VideoPlayer = ({ src, poster, tracks = [], animeId, episodeNumber, onNextE
                           </span>
                         </button>
                       )}
+
+                      {/* Subtitle selection + Upload/Delete UI */}
+                      <div className="mt-2 space-y-2">
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept=".srt,.vtt,text/vtt,text/srt"
+                          className="hidden"
+                          onChange={handleFileInputChange}
+                        />
+
+                        <div className="flex gap-2 min-w-0 items-center">
+                          <select
+                            value={selectedSubtitleKey}
+                            onChange={(e) => setSelectedSubtitleKey(e.target.value)}
+                            className="flex-1 min-w-0 px-2 py-1.5 bg-gray-800 rounded-lg text-sm text-white border border-white/10 focus:outline-none truncate"
+                          >
+                            <option value="none">No Subtitles</option>
+                            {convertedTracks.map((t, i) => (
+                              <option key={`cloud-${i}`} value={`cloud-${i}`}>
+                                {`Cloud: ${t.label || t.lang || 'Subtitle ' + (i+1)}`}
+                              </option>
+                            ))}
+                            {userTracks.map((t, i) => (
+                              <option key={`user-${i}`} value={`user-${i}`}>
+                                {`Uploaded: ${t.label || 'File ' + (i+1)}`}
+                              </option>
+                            ))}
+                          </select>
+
+                          <button
+                            onClick={() => fileInputRef.current?.click()}
+                            className="px-3 py-1.5 bg-gray-800 rounded-lg text-sm text-white hover:bg-gray-700 flex-shrink-0"
+                          >
+                            Upload
+                          </button>
+                        </div>
+
+                        {selectedSubtitleKey.startsWith('user-') && (
+                          <div className="flex gap-2 min-w-0">
+                            <button
+                              onClick={() => removeUserTrack(selectedSubtitleKey.split('-')[1])}
+                              className="flex-1 px-3 py-1.5 bg-red-700 rounded-lg text-sm text-white hover:bg-red-600 min-w-0"
+                            >
+                              Delete Uploaded
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
