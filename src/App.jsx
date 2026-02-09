@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { HashRouter, Route, Routes } from "react-router-dom";
 import AgeGate from "./components/AgeGate";
 import Layout from "./components/layout/Layout";
 import AnimeBrowsePage from "./pages/AnimeBrowse";
@@ -25,7 +25,7 @@ function App() {
   }
 
   return (
-    <BrowserRouter basename="/StreamFlix">
+    <HashRouter>
       <Routes>
         {/* Layout Route */}
         <Route path="/" element={<Layout />}>
@@ -66,7 +66,7 @@ function App() {
         {/* 404 Page */}
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
