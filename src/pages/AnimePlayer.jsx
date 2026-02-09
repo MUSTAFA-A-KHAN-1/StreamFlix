@@ -1818,11 +1818,11 @@ const VideoPlayer = ({ src, poster, tracks = [], animeId, episodeNumber, onNextE
                           onChange={handleFileInputChange}
                         />
 
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 min-w-0 items-center">
                           <select
                             value={selectedSubtitleKey}
                             onChange={(e) => setSelectedSubtitleKey(e.target.value)}
-                            className="flex-1 px-2 py-1.5 bg-gray-800 rounded-lg text-sm text-white border border-white/10 focus:outline-none"
+                            className="flex-1 min-w-0 px-2 py-1.5 bg-gray-800 rounded-lg text-sm text-white border border-white/10 focus:outline-none truncate"
                           >
                             <option value="none">No Subtitles</option>
                             {convertedTracks.map((t, i) => (
@@ -1839,17 +1839,17 @@ const VideoPlayer = ({ src, poster, tracks = [], animeId, episodeNumber, onNextE
 
                           <button
                             onClick={() => fileInputRef.current?.click()}
-                            className="px-3 py-1.5 bg-gray-800 rounded-lg text-sm text-white hover:bg-gray-700"
+                            className="px-3 py-1.5 bg-gray-800 rounded-lg text-sm text-white hover:bg-gray-700 flex-shrink-0"
                           >
                             Upload
                           </button>
                         </div>
 
                         {selectedSubtitleKey.startsWith('user-') && (
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 min-w-0">
                             <button
                               onClick={() => removeUserTrack(selectedSubtitleKey.split('-')[1])}
-                              className="flex-1 px-3 py-1.5 bg-red-700 rounded-lg text-sm text-white hover:bg-red-600"
+                              className="flex-1 px-3 py-1.5 bg-red-700 rounded-lg text-sm text-white hover:bg-red-600 min-w-0"
                             >
                               Delete Uploaded
                             </button>
